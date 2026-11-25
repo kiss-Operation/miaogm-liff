@@ -52,30 +52,63 @@
     });
   }
 
-  function statCard(label, num, unit) {
-    return el('div', { class: 'stat' }, [
-      el('div', { class: 'label', text: label }),
-      el('div', { class: 'num', text: String(num) }),
-      el('div', { class: 'unit', text: unit })
-    ]);
+  function newRequestId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
   }
 
-  function renderAccount(acct) {
+  function statCard(label, num, unit) {
+    var n = el('div', { class: 'num', text: String(num) });
+    return el('div', { class: 'stat' }, [el('div', { class: 'label', text: label }), n, el('div', { class: 'unit', text: unit })]);
+  }
+
+  function signed(n) { return (n > 0 ? '+' : '') + n; }
+
+  function renderHistory(list) {
+    var box = el('div', { class: 'card' }, [el('div', { class: 'card-title', text: '最近紀錄' })]);
+    if (!list || !list.length) {
+      box.appendChild(el('div', { class: 'muted', text: '目前沒有紀錄' }));
+      return box;
+    }
+    list.forEach(function (h) {
+      var parts = [];
+      if (h.bags) parts.push(signed(h.bags) + ' 包');
+      if (h.points) parts.push(signed(h.points) + ' 點');
+      box.appendChild(el('div', { class: 'row' }, [
+        el('div', { class: 'row-main' }, [
+          el('div', { class: 'row-title', text: h.type }),
+          el('div', { class: 'muted small', text: h.time })
+        ]),
+        el('div', { class: 'row-side', text: parts.join('／') })
+      ]));
+    });
+    return box;
+  }
+
+  function renderAccount(acct, history) {
     clear();
     app.appendChild(topbar('我的帳戶'));
-    if (acct.status === '待補資料') return renderProfileForm(acct);
+    if (acct.status === '待補資料') return renderProfileForm(acct, false);
     app.appendChild(el('div', { class: 'hello', text: (acct.name || '顧客') + '，您好' }));
     app.appendChild(el('div', { class: 'cards' }, [
       statCard('寄倉庫存', acct.stock, '包'),
       statCard('點數餘額', acct.points, '點')
     ]));
+    app.appendChild(renderHistory(history));
+    var edit = el('button', { class: 'link', type: 'button', text: '編輯資料' });
+    edit.addEventListener('click', function () {
+      clear();
+      app.appendChild(topbar('編輯資料'));
+      renderProfileForm(acct, true, history);
+    });
+    app.appendChild(el('div', { class: 'center-link' }, [edit]));
   }
 
-  function renderProfileForm(acct) {
-    app.appendChild(el('div', { class: 'hello', text: '首次使用，請先填寫基本資料' }));
+  function renderProfileForm(acct, isEdit, history) {
+    if (!isEdit) app.appendChild(el('div', { class: 'hello', text: '首次使用，請先填寫基本資料' }));
     var name = el('input', { type: 'text', id: 'f-name', maxlength: '30', autocomplete: 'name' });
     var phone = el('input', { type: 'tel', id: 'f-phone', maxlength: '10', inputmode: 'numeric', placeholder: '09xxxxxxxx', autocomplete: 'tel' });
     name.value = acct.name || '';
+    if (isEdit) phone.value = acct.phone || '';
     var btn = el('button', { class: 'btn', type: 'button', text: '送出' });
     var msg = el('div', { class: 'msg' });
     btn.addEventListener('click', function () {
@@ -88,7 +121,7 @@
       btn.disabled = true;
       btn.textContent = '送出中…';
       api('updateProfile', { name: n, phone: p }).then(function (data) {
-        renderAccount(data);
+        return api('getHistory').catch(function () { return []; }).then(function (h) { renderAccount(data, h); });
       }).catch(function (err) {
         btn.disabled = false;
         btn.textContent = '送出';
@@ -96,11 +129,81 @@
         msg.textContent = err.message;
       });
     });
-    app.appendChild(el('div', { class: 'card' }, [
+    var children = [
       el('label', { for: 'f-name', text: '姓名' }), name,
       el('label', { for: 'f-phone', text: '手機' }), phone,
       btn, msg
+    ];
+    if (isEdit) {
+      var cancel = el('button', { class: 'link', type: 'button', text: '取消' });
+      cancel.addEventListener('click', function () { renderAccount(acct, history); });
+      children.push(el('div', { class: 'center-link' }, [cancel]));
+    }
+    app.appendChild(el('div', { class: 'card' }, children));
+  }
+
+  function renderRedeem(acct, plans) {
+    clear();
+    app.appendChild(topbar('兌換寄倉'));
+    if (acct.status === '待補資料') {
+      app.appendChild(el('div', { class: 'card' }, [el('div', { class: 'muted', text: '請先到「我的帳戶」完成基本資料，才能兌換。' })]));
+      return;
+    }
+    var pointsNum = el('div', { class: 'num', text: String(acct.points) });
+    var stockNum = el('div', { class: 'num', text: String(acct.stock) });
+    app.appendChild(el('div', { class: 'banner' }, [
+      el('div', { class: 'banner-item' }, [el('div', { class: 'label', text: '點數餘額' }), pointsNum]),
+      el('div', { class: 'banner-item' }, [el('div', { class: 'label', text: '寄倉庫存（包）' }), stockNum])
     ]));
+    var msg = el('div', { class: 'msg' });
+    var busy = false;
+    var buttons = [];
+
+    function refreshButtons() {
+      buttons.forEach(function (b) {
+        var enough = acct.points >= b.plan.points;
+        b.btn.disabled = busy || !enough;
+        b.btn.textContent = enough ? '兌換' : '點數不足';
+      });
+    }
+
+    if (!plans.length) {
+      app.appendChild(el('div', { class: 'card' }, [el('div', { class: 'muted', text: '目前沒有可兌換的方案。' })]));
+    }
+    plans.forEach(function (p) {
+      var btn = el('button', { class: 'btn small-btn', type: 'button', text: '兌換' });
+      buttons.push({ plan: p, btn: btn });
+      btn.addEventListener('click', function () {
+        if (busy) return;
+        if (!window.confirm('確定用 ' + p.points + ' 點兌換 ' + p.bags + ' 包？')) return;
+        busy = true;
+        refreshButtons();
+        msg.className = 'msg';
+        msg.textContent = '處理中…';
+        api('redeemPlan', { planId: p.id, requestId: newRequestId() }).then(function (data) {
+          acct = data.account;
+          pointsNum.textContent = String(acct.points);
+          stockNum.textContent = String(acct.stock);
+          msg.className = 'msg ok';
+          msg.textContent = data.duplicate ? '此筆兌換已完成' : '兌換成功！入庫 ' + data.bags + ' 包，目前庫存 ' + acct.stock + ' 包';
+        }).catch(function (err) {
+          msg.className = 'msg err';
+          msg.textContent = err.message;
+        }).then(function () {
+          busy = false;
+          refreshButtons();
+        });
+      });
+      app.appendChild(el('div', { class: 'card plan' }, [
+        el('div', { class: 'plan-main' }, [
+          el('div', { class: 'row-title', text: p.name }),
+          el('div', { class: 'muted', text: p.points + ' 點 → 入庫 ' + p.bags + ' 包' })
+        ]),
+        btn
+      ]));
+    });
+    app.appendChild(msg);
+    refreshButtons();
   }
 
   function renderComingSoon(title) {
@@ -110,11 +213,18 @@
   }
 
   function route() {
+    showLoading();
     if (page === 'account') {
-      showLoading();
-      return api('getAccount').then(renderAccount);
+      return Promise.all([api('getAccount'), api('getHistory').catch(function () { return []; })]).then(function (r) {
+        renderAccount(r[0], r[1]);
+      });
     }
-    var titles = { redeem: '兌換寄倉', pickup: '申請取貨', topup: '儲值' };
+    if (page === 'redeem') {
+      return Promise.all([api('getAccount'), api('getPlans')]).then(function (r) {
+        renderRedeem(r[0], r[1]);
+      });
+    }
+    var titles = { pickup: '申請取貨', topup: '儲值' };
     renderComingSoon(titles[page] || '喵硅蜜寄倉');
   }
 
