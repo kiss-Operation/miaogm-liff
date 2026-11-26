@@ -208,119 +208,129 @@
   }
 
   function renderPickup(acct, info) {
-  clear();
-  app.appendChild(topbar('申請取貨'));
-  if (acct.status === '待補資料') {
-    app.appendChild(el('div', { class: 'card' }, [el('div', { class: 'muted', text: '請先到「我的帳戶」完成基本資料，才能申請取貨。' })]));
-    return;
-  }
-  var stockNum = el('div', { class: 'num', text: String(info.stock) });
-  var availNum = el('div', { class: 'num', text: String(info.available) });
-  app.appendChild(el('div', { class: 'banner' }, [
-    el('div', { class: 'banner-item' }, [el('div', { class: 'label', text: '寄倉庫存（包）' }), stockNum]),
-    el('div', { class: 'banner-item' }, [el('div', { class: 'label', text: '可申請包數' }), availNum])
-  ]));
-  var qty = 1, method = '自取', busy = false;
-  var qtyNum = el('div', { class: 'num', text: '1' });
-  var minus = el('button', { class: 'btn small-btn', type: 'button', text: '－' });
-  var plus = el('button', { class: 'btn small-btn', type: 'button', text: '＋' });
-  var selfBtn = el('button', { type: 'button', text: '自取' });
-  var shipBtn = el('button', { type: 'button', text: '宅配' });
-  var addrLabel = el('label', { for: 'f-addr', text: '收件地址' });
-  var address = el('input', { type: 'text', id: 'f-addr', maxlength: '200', placeholder: '請填寫完整收件地址' });
-  var note = el('input', { type: 'text', id: 'f-note', maxlength: '100', placeholder: '選填' });
-  var submit = el('button', { class: 'btn', type: 'button', text: '送出申請' });
-  var msg = el('div', { class: 'msg' });
-  var listBox = el('div');
+    clear();
+    app.appendChild(topbar('申請取貨'));
+    if (acct.status === '待補資料') {
+      app.appendChild(el('div', { class: 'card' }, [el('div', { class: 'muted', text: '請先到「我的帳戶」完成基本資料，才能申請取貨。' })]));
+      return;
+    }
+    var bs = info.boxSize || 6;
+    function fmt(n) {
+      var b = Math.floor(n / bs), r = n % bs;
+      if (!b) return r + ' 包';
+      return b + ' 箱' + (r ? ' ' + r + ' 包' : '');
+    }
+    function maxBoxes() { return Math.floor(info.available / bs); }
+    var stockNum = el('div', { class: 'num', text: fmt(info.stock) });
+    var availNum = el('div', { class: 'num', text: maxBoxes() + ' 箱' });
+    app.appendChild(el('div', { class: 'banner' }, [
+      el('div', { class: 'banner-item' }, [el('div', { class: 'label', text: '寄倉庫存' }), stockNum]),
+      el('div', { class: 'banner-item' }, [el('div', { class: 'label', text: '可申請（整箱）' }), availNum])
+    ]));
+    app.appendChild(el('div', { class: 'muted small', text: '1 箱 = ' + bs + ' 包，以整箱為單位申請。目前僅開放宅配。' }));
+    var boxes = 1, busy = false;
+    var qtyNum = el('div', { class: 'num', text: '' });
+    var minus = el('button', { class: 'btn small-btn', type: 'button', text: '－' });
+    var plus = el('button', { class: 'btn small-btn', type: 'button', text: '＋' });
+    var recipient = el('input', { type: 'text', id: 'f-rcp', maxlength: '30', placeholder: '收件人姓名' });
+    var phone = el('input', { type: 'tel', id: 'f-tel', maxlength: '10', inputmode: 'numeric', placeholder: '09xxxxxxxx' });
+    var address = el('input', { type: 'text', id: 'f-addr', maxlength: '200', placeholder: '請填寫完整收件地址' });
+    var note = el('input', { type: 'text', id: 'f-note', maxlength: '100', placeholder: '選填' });
+    recipient.value = acct.name || '';
+    phone.value = acct.phone || '';
+    var submit = el('button', { class: 'btn', type: 'button', text: '送出申請' });
+    var msg = el('div', { class: 'msg' });
+    var listBox = el('div');
 
-  function sync() {
-    if (qty > info.available) qty = Math.max(1, info.available);
-    qtyNum.textContent = String(qty);
-    stockNum.textContent = String(info.stock);
-    availNum.textContent = String(info.available);
-    minus.disabled = busy || qty <= 1;
-    plus.disabled = busy || qty >= info.available;
-    selfBtn.className = method === '自取' ? 'btn small-btn' : 'link';
-    shipBtn.className = method === '宅配' ? 'btn small-btn' : 'link';
-    addrLabel.style.display = method === '宅配' ? '' : 'none';
-    address.style.display = method === '宅配' ? '' : 'none';
-    submit.disabled = busy || info.available < 1;
-    submit.textContent = info.available < 1 ? '目前沒有可申請的包數' : (busy ? '送出中…' : '送出申請');
-  }
+    function sync() {
+      var mx = maxBoxes();
+      if (boxes > mx) boxes = Math.max(1, mx);
+      qtyNum.textContent = boxes + ' 箱（' + (boxes * bs) + ' 包）';
+      stockNum.textContent = fmt(info.stock);
+      availNum.textContent = mx + ' 箱';
+      minus.disabled = busy || boxes <= 1;
+      plus.disabled = busy || boxes >= mx;
+      submit.disabled = busy || mx < 1;
+      submit.textContent = mx < 1 ? '庫存不足一箱，無法申請' : (busy ? '送出中…' : '送出申請');
+    }
 
-  function renderList() {
-    while (listBox.firstChild) listBox.removeChild(listBox.firstChild);
-    var box = el('div', { class: 'card' }, [el('div', { class: 'card-title', text: '最近申請' })]);
-    if (!info.list.length) box.appendChild(el('div', { class: 'muted', text: '目前沒有申請紀錄' }));
-    info.list.forEach(function (r) {
-      var side = [el('div', { class: 'row-side', text: r.status })];
-      if (r.canCancel) {
-        var cancel = el('button', { class: 'link', type: 'button', text: '取消申請' });
-        cancel.addEventListener('click', function () {
-          if (busy) return;
-          if (!window.confirm('確定取消這筆申請？')) return;
-          busy = true; sync();
-          api('cancelPickup', { reqId: r.id }).then(function (data) {
-            info = data.info;
-            msg.className = 'msg ok';
-            msg.textContent = '已取消申請';
-          }).catch(function (err) {
-            msg.className = 'msg err';
-            msg.textContent = err.message;
-          }).then(function () { busy = false; sync(); renderList(); });
-        });
-        side.push(cancel);
-      }
-      box.appendChild(el('div', { class: 'row' }, [
-        el('div', { class: 'row-main' }, [
-          el('div', { class: 'row-title', text: r.qty + ' 包｜' + r.method }),
-          el('div', { class: 'muted small', text: r.time })
-        ]),
-        el('div', {}, side)
-      ]));
+    function renderList() {
+      while (listBox.firstChild) listBox.removeChild(listBox.firstChild);
+      var box = el('div', { class: 'card' }, [el('div', { class: 'card-title', text: '最近申請' })]);
+      if (!info.list.length) box.appendChild(el('div', { class: 'muted', text: '目前沒有申請紀錄' }));
+      info.list.forEach(function (r) {
+        var side = [el('div', { class: 'row-side', text: r.status })];
+        if (r.canCancel) {
+          var cancel = el('button', { class: 'link', type: 'button', text: '取消申請' });
+          cancel.addEventListener('click', function () {
+            if (busy) return;
+            if (!window.confirm('確定取消這筆申請？')) return;
+            busy = true; sync();
+            api('cancelPickup', { reqId: r.id }).then(function (data) {
+              info = data.info;
+              msg.className = 'msg ok';
+              msg.textContent = '已取消申請';
+            }).catch(function (err) {
+              msg.className = 'msg err';
+              msg.textContent = err.message;
+            }).then(function () { busy = false; sync(); renderList(); });
+          });
+          side.push(cancel);
+        }
+        var qtyText = (r.qty % bs === 0) ? (r.qty / bs) + ' 箱（' + r.qty + ' 包）' : r.qty + ' 包';
+        box.appendChild(el('div', { class: 'row' }, [
+          el('div', { class: 'row-main' }, [
+            el('div', { class: 'row-title', text: qtyText + '｜' + r.method }),
+            el('div', { class: 'muted small', text: r.time })
+          ]),
+          el('div', {}, side)
+        ]));
+      });
+      listBox.appendChild(box);
+    }
+
+    minus.addEventListener('click', function () { if (boxes > 1) { boxes--; sync(); } });
+    plus.addEventListener('click', function () { if (boxes < maxBoxes()) { boxes++; sync(); } });
+    submit.addEventListener('click', function () {
+      if (busy) return;
+      msg.className = 'msg';
+      msg.textContent = '';
+      var rcp = recipient.value.trim();
+      var tel = phone.value.trim();
+      var addr = address.value.trim();
+      if (!rcp) { msg.className = 'msg err'; msg.textContent = '請填寫收件人'; return; }
+      if (!/^09\d{8}$/.test(tel)) { msg.className = 'msg err'; msg.textContent = '收件電話需為 09 開頭共 10 碼'; return; }
+      if (!addr) { msg.className = 'msg err'; msg.textContent = '請填寫收件地址'; return; }
+      if (!window.confirm('確定申請宅配 ' + boxes + ' 箱（' + (boxes * bs) + ' 包）？')) return;
+      busy = true; sync();
+      api('createPickup', { qty: boxes * bs, method: '宅配', recipient: rcp, phone: tel, address: addr, note: note.value.trim(), requestId: newRequestId() }).then(function (data) {
+        info = data.info;
+        msg.className = 'msg ok';
+        msg.textContent = data.duplicate ? '此筆申請已送出' : '申請已送出，店家會盡快處理';
+        boxes = 1;
+        note.value = '';
+      }).catch(function (err) {
+        msg.className = 'msg err';
+        msg.textContent = err.message;
+      }).then(function () { busy = false; sync(); renderList(); });
     });
-    listBox.appendChild(box);
+
+    app.appendChild(el('div', { class: 'card' }, [
+      el('div', { class: 'card-title', text: '申請數量' }),
+      el('div', { class: 'row' }, [minus, qtyNum, plus]),
+      el('div', { class: 'card-title', text: '配送方式：宅配' }),
+      el('label', { for: 'f-rcp', text: '收件人' }), recipient,
+      el('label', { for: 'f-tel', text: '收件電話' }), phone,
+      el('label', { for: 'f-addr', text: '收件地址（必填）' }), address,
+      el('label', { for: 'f-note', text: '備註' }), note,
+      submit, msg
+    ]));
+    app.appendChild(listBox);
+    sync();
+    renderList();
   }
 
-  minus.addEventListener('click', function () { if (qty > 1) { qty--; sync(); } });
-  plus.addEventListener('click', function () { if (qty < info.available) { qty++; sync(); } });
-  selfBtn.addEventListener('click', function () { method = '自取'; sync(); });
-  shipBtn.addEventListener('click', function () { method = '宅配'; sync(); });
-  submit.addEventListener('click', function () {
-    if (busy) return;
-    msg.className = 'msg';
-    msg.textContent = '';
-    var addr = address.value.trim();
-    if (method === '宅配' && !addr) { msg.className = 'msg err'; msg.textContent = '宅配請填寫收件地址'; return; }
-    if (!window.confirm('確定申請取貨 ' + qty + ' 包（' + method + '）？')) return;
-    busy = true; sync();
-    api('createPickup', { qty: qty, method: method, address: addr, note: note.value.trim(), requestId: newRequestId() }).then(function (data) {
-      info = data.info;
-      msg.className = 'msg ok';
-      msg.textContent = data.duplicate ? '此筆申請已送出' : '申請已送出，店家會盡快處理';
-      qty = 1;
-      note.value = '';
-    }).catch(function (err) {
-      msg.className = 'msg err';
-      msg.textContent = err.message;
-    }).then(function () { busy = false; sync(); renderList(); });
-  });
-
-  app.appendChild(el('div', { class: 'card' }, [
-    el('div', { class: 'card-title', text: '申請包數' }),
-    el('div', { class: 'row' }, [minus, qtyNum, plus]),
-    el('div', { class: 'card-title', text: '取貨方式' }),
-    el('div', { class: 'row' }, [selfBtn, shipBtn]),
-    addrLabel, address,
-    el('label', { for: 'f-note', text: '備註' }), note,
-    submit, msg
-  ]));
-  app.appendChild(listBox);
-  sync();
-  renderList();
-}
-
-function renderTopup(acct, info) {
+  function renderTopup(acct, info) {
     clear();
     app.appendChild(topbar('儲值'));
     if (acct.status === '待補資料') {
@@ -332,37 +342,42 @@ function renderTopup(acct, info) {
     ]));
     var msg = el('div', { class: 'msg' });
     var busy = false;
-    var buttons = [];
-    function setBusy() { buttons.forEach(function (b) { b.disabled = busy; }); }
-    app.appendChild(el('div', { class: 'muted', text: '選擇金額，以 LINE Pay 付款（1 元 = ' + info.ratio + ' 點）' }));
-    if (!info.options.length) app.appendChild(el('div', { class: 'card' }, [el('div', { class: 'muted', text: '目前沒有可選的儲值金額。' })]));
-    info.options.forEach(function (o) {
-      var btn = el('button', { class: 'btn small-btn', type: 'button', text: '儲值' });
-      buttons.push(btn);
-      btn.addEventListener('click', function () {
-        if (busy) return;
-        if (!window.confirm('確定以 LINE Pay 儲值 NT$' + o.amount + '（獲得 ' + o.points + ' 點）？')) return;
-        busy = true; setBusy();
-        msg.className = 'msg';
-        msg.textContent = '前往 LINE Pay…';
-        api('createTopup', { amount: o.amount }).then(function (data) {
-          if (!data.paymentUrl) throw new Error('無法取得付款網址');
-          window.location.href = data.paymentUrl;
-        }).catch(function (err) {
-          msg.className = 'msg err';
-          msg.textContent = err.message;
-          busy = false; setBusy();
-        });
-      });
-      app.appendChild(el('div', { class: 'card plan' }, [
-        el('div', { class: 'plan-main' }, [
-          el('div', { class: 'row-title', text: 'NT$ ' + o.amount }),
-          el('div', { class: 'muted', text: '獲得 ' + o.points + ' 點' })
-        ]),
-        btn
-      ]));
+    var input = el('input', { type: 'tel', id: 'f-amount', inputmode: 'numeric', maxlength: '6', placeholder: '輸入 ' + info.min + ' ～ ' + info.max + ' 元' });
+    var preview = el('div', { class: 'muted', text: '' });
+    var btn = el('button', { class: 'btn', type: 'button', text: '前往 LINE Pay 付款' });
+    function amt() { var s = input.value.trim(); return /^\d+$/.test(s) ? parseInt(s, 10) : 0; }
+    function updatePreview() { var a = amt(); preview.textContent = a ? '將獲得 ' + Math.round(a * info.ratio) + ' 點' : ''; }
+    input.addEventListener('input', function () { input.value = input.value.replace(/\D/g, ''); updatePreview(); });
+    var chips = el('div', { class: 'row' }, []);
+    (info.options || []).forEach(function (o) {
+      var c = el('button', { class: 'link', type: 'button', text: 'NT$' + o.amount });
+      c.addEventListener('click', function () { input.value = String(o.amount); updatePreview(); });
+      chips.appendChild(c);
     });
-    app.appendChild(msg);
+    btn.addEventListener('click', function () {
+      if (busy) return;
+      var a = amt();
+      if (a < info.min || a > info.max) { msg.className = 'msg err'; msg.textContent = '請輸入 ' + info.min + ' ～ ' + info.max + ' 元之間的整數金額'; return; }
+      if (!window.confirm('確定以 LINE Pay 儲值 NT$' + a + '（獲得 ' + Math.round(a * info.ratio) + ' 點）？')) return;
+      busy = true; btn.disabled = true;
+      msg.className = 'msg';
+      msg.textContent = '前往 LINE Pay…';
+      api('createTopup', { amount: a }).then(function (data) {
+        if (!data.paymentUrl) throw new Error('無法取得付款網址');
+        window.location.href = data.paymentUrl;
+      }).catch(function (err) {
+        msg.className = 'msg err';
+        msg.textContent = err.message;
+        busy = false; btn.disabled = false;
+      });
+    });
+    app.appendChild(el('div', { class: 'card' }, [
+      el('div', { class: 'card-title', text: '儲值金額（元）' }),
+      el('label', { for: 'f-amount', text: '自行輸入金額（1 元 = ' + info.ratio + ' 點）' }), input,
+      preview,
+      chips,
+      btn, msg
+    ]));
     var box = el('div', { class: 'card' }, [el('div', { class: 'card-title', text: '最近儲值' })]);
     if (!info.list.length) box.appendChild(el('div', { class: 'muted', text: '目前沒有儲值紀錄' }));
     info.list.forEach(function (r) {
