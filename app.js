@@ -1,7 +1,8 @@
 'use strict';
 (function () {
   var params = new URLSearchParams(location.search);
-  var page = params.get('page') || 'account';
+  var page = (params.get('page') || '').split('?')[0];
+  if (!page) page = /[?&](orderId|transactionId)=/.test(location.href) ? 'payresult' : 'account';
   var dealerId = params.get('dealer') || 'HQ';
   var idToken = null;
   var app = document.getElementById('app');
@@ -319,7 +320,82 @@
   renderList();
 }
 
-function renderComingSoon(title) {
+function renderTopup(acct, info) {
+    clear();
+    app.appendChild(topbar('儲值'));
+    if (acct.status === '待補資料') {
+      app.appendChild(el('div', { class: 'card' }, [el('div', { class: 'muted', text: '請先到「我的帳戶」完成基本資料，才能儲值。' })]));
+      return;
+    }
+    app.appendChild(el('div', { class: 'banner' }, [
+      el('div', { class: 'banner-item' }, [el('div', { class: 'label', text: '點數餘額' }), el('div', { class: 'num', text: String(acct.points) })])
+    ]));
+    var msg = el('div', { class: 'msg' });
+    var busy = false;
+    var buttons = [];
+    function setBusy() { buttons.forEach(function (b) { b.disabled = busy; }); }
+    app.appendChild(el('div', { class: 'muted', text: '選擇金額，以 LINE Pay 付款（1 元 = ' + info.ratio + ' 點）' }));
+    if (!info.options.length) app.appendChild(el('div', { class: 'card' }, [el('div', { class: 'muted', text: '目前沒有可選的儲值金額。' })]));
+    info.options.forEach(function (o) {
+      var btn = el('button', { class: 'btn small-btn', type: 'button', text: '儲值' });
+      buttons.push(btn);
+      btn.addEventListener('click', function () {
+        if (busy) return;
+        if (!window.confirm('確定以 LINE Pay 儲值 NT$' + o.amount + '（獲得 ' + o.points + ' 點）？')) return;
+        busy = true; setBusy();
+        msg.className = 'msg';
+        msg.textContent = '前往 LINE Pay…';
+        api('createTopup', { amount: o.amount }).then(function (data) {
+          if (!data.paymentUrl) throw new Error('無法取得付款網址');
+          window.location.href = data.paymentUrl;
+        }).catch(function (err) {
+          msg.className = 'msg err';
+          msg.textContent = err.message;
+          busy = false; setBusy();
+        });
+      });
+      app.appendChild(el('div', { class: 'card plan' }, [
+        el('div', { class: 'plan-main' }, [
+          el('div', { class: 'row-title', text: 'NT$ ' + o.amount }),
+          el('div', { class: 'muted', text: '獲得 ' + o.points + ' 點' })
+        ]),
+        btn
+      ]));
+    });
+    app.appendChild(msg);
+    var box = el('div', { class: 'card' }, [el('div', { class: 'card-title', text: '最近儲值' })]);
+    if (!info.list.length) box.appendChild(el('div', { class: 'muted', text: '目前沒有儲值紀錄' }));
+    info.list.forEach(function (r) {
+      box.appendChild(el('div', { class: 'row' }, [
+        el('div', { class: 'row-main' }, [
+          el('div', { class: 'row-title', text: 'NT$ ' + r.amount + '｜' + r.points + ' 點' }),
+          el('div', { class: 'muted small', text: r.time })
+        ]),
+        el('div', { class: 'row-side', text: r.status })
+      ]));
+    });
+    app.appendChild(box);
+  }
+
+  function renderPayResult(data) {
+    clear();
+    app.appendChild(topbar('付款結果'));
+    var ok = data.status === '成功';
+    var pending = data.status === '待付款';
+    var text = ok ? '儲值成功！NT$' + data.amount + '，獲得 ' + data.points + ' 點，目前點數 ' + data.account.points + ' 點'
+      : pending ? '付款確認中，請稍候再按「重新確認」'
+      : '付款未完成（' + data.status + '），沒有扣款，點數也沒有增加';
+    var children = [el('div', { class: ok ? 'msg ok' : (pending ? 'msg' : 'msg err'), text: text })];
+    var again = el('button', { class: 'btn', type: 'button', text: pending ? '重新確認' : '回到儲值頁' });
+    again.addEventListener('click', function () {
+      if (pending) { route(); return; }
+      window.location.href = location.pathname + '?page=topup';
+    });
+    children.push(again);
+    app.appendChild(el('div', { class: 'card' }, children));
+  }
+
+  function renderComingSoon(title) {
     clear();
     app.appendChild(topbar(title));
     app.appendChild(el('div', { class: 'card' }, [el('div', { class: 'muted', text: '此功能即將開放。' })]));
@@ -342,7 +418,17 @@ function renderComingSoon(title) {
       renderPickup(r[0], r[1]);
     });
   }
-  var titles = { topup: '儲值' };
+  if (page === 'topup') {
+      return Promise.all([api('getAccount'), api('getTopupInfo')]).then(function (r) {
+        renderTopup(r[0], r[1]);
+      });
+    }
+    if (page === 'payresult') {
+      var oid = '';
+      try { oid = decodeURIComponent((location.href.match(/[?&]orderId=([^&#]+)/) || [])[1] || ''); } catch (e) { oid = ''; }
+      return api('confirmTopup', { orderId: oid }).then(renderPayResult);
+    }
+    var titles = { topup: '儲值' };
     renderComingSoon(titles[page] || '喵硅蜜寄倉');
   }
 
